@@ -1,0 +1,12 @@
+{application, socketio_erl,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { socketio_erl_app, []}},
+  {env, []}
+ ]}.
