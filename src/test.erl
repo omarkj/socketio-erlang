@@ -21,7 +21,7 @@ loop(Req) ->
 			Ws = mochiweb_websocket:create_ws(Req, Version, true),
 			io:format("WS is ~p~n", [Ws]);
 		false ->
-			io:format("FUCK OFF")
+			io:format("No WS")
    end,
    ok.
 
