@@ -3,13 +3,12 @@
 -export ([get/1, send/1, list/0]).
 
 %% Module API
-list() ->
-  Ws.
+list() -> Ws.
 
 get(Key) ->
   case proplists:get_value(Key) of
     undefined -> undefined;
-    Other -> Other
+    Match -> Match
   end.
 
 send(Message) ->
