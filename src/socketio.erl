@@ -24,28 +24,18 @@
 % HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 % NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 % POSSIBILITY OF SUCH DAMAGE.
+-module (socketio).
+-export ([create_socketio/4]).
 
--module (socketio, [ServerRef]).
-
--export ([get/1, send/1, disconnect/0, list/0]).
-
-%% Module API
-list() -> 
-  List = gen_server:call(ServerRef, {get, list}),
-  case List of
-    {reply, {list, Value}} -> Value;
-    _ -> undefined
-  end.
-
-get(Key) ->
-  Setting = gen_server:call(ServerRef, {get, Key}),
-  case Setting of
-    {reply, {value, Value}} -> Value;
-    _ -> undefined
-  end.
-
-disconnect() ->
-  gen_server:cast(ServerRef, {disconnect}).
-
-send(Message) ->
-  gen_server:cast(ServerRef, {send, Message}).
+%% API
+create_socketio(<<"websocket">>, Req, AutoExit, Loop) ->
+  case mochiweb_websocket_server:check(Req:get(headers)) of
+    {true, Version} ->
+      mochiweb_websocket_server:create_ws(Req, Version, AutoExit, Loop);
+    _ ->
+      Req:ok("No WS")
+  end;
+create_socketio(<<"xhr-polling">>, Req, AutoExit, Loop) ->
+  void;
+create_socketio(<<"socket.io.js">>, Req, AutoExit, Loop) ->
+  void. % Serve the socketio file
