@@ -48,7 +48,7 @@ stop() ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([Req, Type]) ->
+init([Req]) ->
   {ok, []}.
 
 handle_call({get, list}, _, State) ->

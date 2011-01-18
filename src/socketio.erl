@@ -31,11 +31,7 @@
 create_socketio(<<"websocket">>, Req, AutoExit, Loop) ->
   case mochiweb_websocket_server:check(Req:get(headers)) of
     {true, Version} ->
-      mochiweb_websocket_server:create_ws(Req, Version, AutoExit, Loop);
+      socketio_websocket:create(Req, Version, AutoExit, Loop);
     _ ->
       Req:ok("No WS")
-  end;
-create_socketio(<<"xhr-polling">>, Req, AutoExit, Loop) ->
-  void;
-create_socketio(<<"socket.io.js">>, Req, AutoExit, Loop) ->
-  void. % Serve the socketio file
+  end.

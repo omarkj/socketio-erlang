@@ -15,7 +15,9 @@ incoming(Req) ->
   case BinPath of
     <<"/rt/", Rest/binary>> ->
       socketio:create_socketio(Rest, Req, true,
-        fun(SocketIo)-> handle_socketio(SocketIo) end);
+        fun(SocketIo) ->
+          handle_socketio(SocketIo)
+        end);
     _ ->
       io:format("Not handled~n")
   end.
@@ -23,8 +25,6 @@ incoming(Req) ->
 handle_socketio(SocketIo) ->
   receive
     {data, Data} ->
-      SocketIo:send("Hello client!"),
-      io:format("Data is here, and it is ~p~n", [Data]),
       handle_socketio(SocketIo);
     gone ->
       io:format("The client is gone");

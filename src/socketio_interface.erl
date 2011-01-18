@@ -25,27 +25,12 @@
 % NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 % POSSIBILITY OF SUCH DAMAGE.
 
--module (socketio_interface, [ServerRef]).
-
--export ([get/1, send/1, disconnect/0, list/0]).
+-module (socketio_interface, [SocketIo, Pid]).
+-include ("socketio.hrl").
+-export ([send/1, list/0]).
 
 %% Module API
-list() -> 
-  List = gen_server:call(ServerRef, {get, list}),
-  case List of
-    {reply, {list, Value}} -> Value;
-    _ -> undefined
-  end.
-
-get(Key) ->
-  Setting = gen_server:call(ServerRef, {get, Key}),
-  case Setting of
-    {reply, {value, Value}} -> Value;
-    _ -> undefined
-  end.
-
-disconnect() ->
-  gen_server:cast(ServerRef, {disconnect}).
+list() -> SocketIo.
 
 send(Message) ->
-  gen_server:cast(ServerRef, {send, Message}).
+  Pid ! {send, socketio_utils:encode(binary:list_to_bin([Message]))}.

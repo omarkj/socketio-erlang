@@ -25,8 +25,27 @@
 % NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 % POSSIBILITY OF SUCH DAMAGE.
 -module (socketio_websocket).
+-include ("socketio.hrl").
+-export ([create/4, handle_websocket/2]).
 
--export ([create/0]).
+create(Req, Version, AutoExit, Loop) ->
+  SocketIo = #socketio{
+    req = Req,
+    scheme = Req:get(scheme),
+    path = Req:get(path),
+    headers = Req:get(headers),
+    autoexit = AutoExit
+  },
+  SocketIoClient = socketio_interface:new(SocketIo, self()), % Create the client
+	SocketIoLoop = spawn(fun() -> Loop(SocketIoClient) end),
+  mochiweb_websocket_server:create_ws(Req, Version, AutoExit,
+  fun(Ws) ->
+    handle_websocket(Ws, SocketIoLoop)
+  end).
 
-create() ->
-  io:format("Creating websocket~n").
+handle_websocket(Ws, Loop) ->
+  receive
+    {data, Data} ->
+      Loop ! {data, Data},
+      handle_websocket(Ws, Loop)
+  end.
