@@ -31,21 +31,28 @@
 create(Req, Version, AutoExit, Loop) ->
   SocketIo = #socketio{
     req = Req,
+		type = websocket,
     scheme = Req:get(scheme),
     path = Req:get(path),
     headers = Req:get(headers),
     autoexit = AutoExit
   },
-  SocketIoClient = socketio_interface:new(SocketIo, self()), % Create the client
+
+  SocketIoClient = socketio_interface:new(SocketIo, self()),
 	SocketIoLoop = spawn(fun() -> Loop(SocketIoClient) end),
-  mochiweb_websocket_server:create_ws(Req, Version, AutoExit,
-  fun(Ws) ->
-    handle_websocket(Ws, SocketIoLoop)
-  end).
+  
+	mochiweb_websocket_server:create_ws(Req, Version, AutoExit,
+		fun(Ws) ->
+			handle_websocket(Ws, SocketIoLoop)
+		end
+	).
 
 handle_websocket(Ws, Loop) ->
   receive
     {data, Data} ->
+			io:format("ye"),
       Loop ! {data, Data},
-      handle_websocket(Ws, Loop)
+      handle_websocket(Ws, Loop);
+		_ ->
+			handle_websocket(Ws, Loop)
   end.

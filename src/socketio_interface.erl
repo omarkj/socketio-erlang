@@ -33,4 +33,4 @@
 list() -> SocketIo.
 
 send(Message) ->
-  Pid ! {send, socketio_utils:encode(binary:list_to_bin([Message]))}.
+	gen_event:notify(Pid, {send, socketio_utils:encode(binary:list_to_bin([Message]))}).
