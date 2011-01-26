@@ -17,6 +17,7 @@ incoming(Req) ->
 		<<"/rt/", Rest/binary>> ->
 			socketio:create(Rest, Req, true,
 				fun(SocketIo)->
+					SocketIo:send("Welcome!"),
 					handle_socketio(SocketIo)
 				end);
 		_ ->

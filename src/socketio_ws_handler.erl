@@ -58,38 +58,41 @@ add_handler() ->
 %% Whenever a new event handler is added to an event manager,
 %% this function is called to initialize the event handler.
 %% @spec init(Args) -> {ok, State}
-init([Req, Version, true, Loop]) ->
+init([Req, Version, AutoExit, Loop, Remove]) ->
 	SocketIo = #socketio{
     req = Req,
 		type = websocket,
     scheme = Req:get(scheme),
     path = Req:get(path),
     headers = Req:get(headers),
-    autoexit = true
+    autoexit = AutoExit
   },
+	WsHandlerPid = self(),
 	SocketIoClient = socketio_interface:new(SocketIo, self()),
 	SocketIoLoop = spawn(fun() -> Loop(SocketIoClient) end),
-	gen_event:notify(self(), {open, Version}),
-	{ok, {SocketIo, SocketIoLoop}}.
-
-handle_event({open, Version}, {SocketIo, SocketIoLoop}) ->
-	Self = self(),
-	SocketServer = spawn(fun() -> create_socket(SocketIo#socketio.req, Version, true, Self) end),
-	{ok, {SocketIo, SocketIoLoop}};
+	SocketPid = spawn(fun() -> create_socket(SocketIo#socketio.req, Version, true, WsHandlerPid) end),
+	monitor(process, SocketPid),
+	{ok, {SocketIo, SocketIoLoop, SocketPid, Remove}}.
 	
-handle_event({data, Buffer}, {SocketIo, SocketIoLoop}) ->
+handle_event({data, Buffer}, {SocketIo, SocketIoLoop, SocketPid, Remove}) ->
 	SocketIoLoop ! {data, Buffer},
-	io:format("Got data ~p~n", [Buffer]),
-	{ok, {SocketIo, SocketIoLoop}};
+	{ok, {SocketIo, SocketIoLoop, SocketPid, Remove}};
 
-handle_event({send, Data}, {SocketIo, SocketIoLoop}) ->
+handle_event({send, Data}, {SocketIo, SocketIoLoop, SocketPid, Remove}) ->
 	Req = SocketIo#socketio.req,
-	Res = mochiweb_socket:send(Req:get(socket), Data),
-	io:format("Result is ~p~n", [Res]),
-	{ok, {SocketIo, SocketIoLoop}}.
+	mochiweb_websocket_server:send(Req:get(socket), Data),
+	{ok, {SocketIo, SocketIoLoop, SocketPid, Remove}};
+
+handle_event(gone, {SocketIo, SocketIoLoop, SocketPid, Remove}) ->
+	Remove(),
+	{ok, {SocketIo, SocketIoLoop, SocketPid, Remove}};
+
+handle_event(_, State) ->
+	io:format("Foo"),
+	{ok, State}.
 
 create_socket(Req, Version, AutoExit, EventHandler) ->
-	mochiweb_websocket_server:create_ws(Req, Version, true, 
+	mochiweb_websocket_server:create_ws(Req, Version, AutoExit, 
 		fun(Ws) ->
 			handle_websocket(Ws, EventHandler)
 		end).
@@ -98,9 +101,6 @@ handle_websocket(Ws, EventHandler) ->
 	receive
     {data, Data} ->
 			gen_event:notify(EventHandler, {data, Data}),
-			handle_websocket(Ws, EventHandler);
-		{send, Data} ->
-			io:format("yo!"),
 			handle_websocket(Ws, EventHandler);
 		_ ->
 			handle_websocket(Ws, EventHandler)
@@ -130,8 +130,14 @@ handle_call(_Request, State) ->
 %%                         {ok, State} |
 %%                         {swap_handler, Args1, State1, Mod2, Args2} |
 %%                         remove_handler
+handle_info({'DOWN', _, process, _, _}, State) ->
+	gen_event:notify(self(), gone),
+	{ok, State};
+handle_info({'EXIT', _, process, _, _}, State) ->
+	gen_event:notify(self(), gone),
+	{ok, State};
 handle_info(_Info, State) ->
-    {ok, State}.
+	{ok, State}.
 
 %% @private
 %% @doc
@@ -140,8 +146,21 @@ handle_info(_Info, State) ->
 %% do any necessary cleaning up.
 %%
 %% @spec terminate(Reason, State) -> void()
-terminate(_Reason, _State) ->
-    ok.
+terminate(_Reason, {SocketIo, SocketIoLoop, SocketPid, _}) ->
+	io:format("AutoExit is ~p~n", [SocketIo#socketio.autoexit]),
+	case SocketIo#socketio.autoexit of
+		true ->
+			io:format("HEre"),
+			exit(SocketIoLoop, kill),
+			exit(SocketPid, kill);
+		_ ->
+			SocketIoLoop ! gone,
+			exit(SocketPid, kill)
+	end,
+	ok;
+terminate(_, _) ->
+	ok.
+	
 
 %% @private
 %% @doc
