@@ -24,16 +24,16 @@
 % HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 % NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 % POSSIBILITY OF SUCH DAMAGE.
--module (socketio_ws_handler).
+-module (socketio_ws).
 -include ("socketio.hrl").
--behaviour (gen_event).
+-behaviour (gen_server).
 
 %% API
--export([start_link/0, add_handler/0]). 
+-export([start_link/5, stop/0]).
 
 %% gen_event callbacks
--export([init/1, handle_event/2, handle_call/2,
-handle_info/2, terminate/2, code_change/3]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+	 terminate/2, code_change/3]).
 
 -define(REF, ?MODULE).
 
@@ -42,15 +42,12 @@ handle_info/2, terminate/2, code_change/3]).
 %% Creates an event manager
 %%
 %% @spec start_link() -> {ok, Pid} | {error, Error}
-start_link() ->
-    gen_event:start_link({local, ?REF}).
-    
-%% @doc
-%% Adds an event handler
-%%
-%% @spec add_handler() -> ok | {'EXIT', Reason} | term()
-add_handler() ->
-    gen_event:add_handler(?REF, ?MODULE, []).
+start_link(Req, Version, AutoExit, Options, Loop) ->
+	gen_server:start_link({global, erlang:make_ref()}, ?MODULE,
+		[Req, Version, AutoExit, Options, Loop], []).
+
+stop() ->
+	gen_server:cast(?REF, stop).
 
 %%% gen_event callbacks
 %% @private
@@ -58,7 +55,7 @@ add_handler() ->
 %% Whenever a new event handler is added to an event manager,
 %% this function is called to initialize the event handler.
 %% @spec init(Args) -> {ok, State}
-init([Req, Version, AutoExit, Loop, Remove]) ->
+init([Req, Version, AutoExit, {Timeout}, Loop]) ->
 	SocketIo = #socketio{
     req = Req,
 		type = websocket,
@@ -67,58 +64,61 @@ init([Req, Version, AutoExit, Loop, Remove]) ->
     headers = Req:get(headers),
     autoexit = AutoExit
   },
-	WsHandlerPid = self(),
+	WsServerPid = self(),
 	SocketIoClient = socketio_interface:new(SocketIo, self()),
 	SocketIoLoop = spawn(fun() -> Loop(SocketIoClient) end),
-	SocketPid = spawn(fun() -> create_socket(SocketIo#socketio.req, Version, true, WsHandlerPid) end),
+	SocketPid = spawn(fun() -> create_socket(SocketIo#socketio.req, Version, WsServerPid, Timeout) end),
 	monitor(process, SocketPid),
-	{ok, {SocketIo, SocketIoLoop, SocketPid, Remove}}.
+	{ok, {SocketIo, SocketIoLoop, SocketPid}}.
 	
-handle_event({data, Buffer}, {SocketIo, SocketIoLoop, SocketPid, Remove}) ->
-	SocketIoLoop ! {data, Buffer},
-	{ok, {SocketIo, SocketIoLoop, SocketPid, Remove}};
+handle_cast({data, Buffer}, {SocketIo, SocketIoLoop, SocketPid}) ->
+	case socketio_utils:decode(Buffer) of
+		heartbeat -> void;
+		Message ->
+			SocketIoLoop ! {data, Message}
+	end,
+	{noreply, {SocketIo, SocketIoLoop, SocketPid}};
 
-handle_event({send, Data}, {SocketIo, SocketIoLoop, SocketPid, Remove}) ->
+handle_cast({send, Data}, {SocketIo, SocketIoLoop, SocketPid}) ->
 	Req = SocketIo#socketio.req,
 	mochiweb_websocket_server:send(Req:get(socket), Data),
-	{ok, {SocketIo, SocketIoLoop, SocketPid, Remove}};
+	{noreply, {SocketIo, SocketIoLoop, SocketPid}};
 
-handle_event(gone, {SocketIo, SocketIoLoop, SocketPid, Remove}) ->
-	Remove(),
-	{ok, {SocketIo, SocketIoLoop, SocketPid, Remove}};
+handle_cast(open, {SocketIo, SocketIoLoop, SocketPid}) ->
+	SocketIoLoop ! open,
+	{noreply, {SocketIo, SocketIoLoop, SocketPid}};
 
-handle_event(_, State) ->
-	io:format("Foo"),
-	{ok, State}.
+handle_cast(gone, {SocketIo, SocketIoLoop, SocketPid}) ->
+	{noreply, {SocketIo, SocketIoLoop, SocketPid}};
 
-create_socket(Req, Version, AutoExit, EventHandler) ->
-	mochiweb_websocket_server:create_ws(Req, Version, AutoExit, 
+handle_cast(_, State) ->
+	{noreply, State}.
+
+handle_call(_Request, _From, State) ->
+  Reply = ok,
+  {reply, Reply, State}.
+
+create_socket(Req, Version, WsServerPid, Timeout) ->
+	mochiweb_websocket_server:create_ws(Req, Version, true, 
 		fun(Ws) ->
-			handle_websocket(Ws, EventHandler)
+			gen_server:cast(WsServerPid, {send, socketio_utils:encode(binary:list_to_bin(erlang:ref_to_list(make_ref())))}),
+			gen_server:cast(WsServerPid, open),
+			handle_websocket(Ws, WsServerPid, Timeout, 0)
 		end).
 
-handle_websocket(Ws, EventHandler) ->
+handle_websocket(Ws, WsServerPid, Timeout, Counter) ->
 	receive
-    {data, Data} ->
-			gen_event:notify(EventHandler, {data, Data}),
-			handle_websocket(Ws, EventHandler);
+		{data, Data} ->
+			gen_server:cast(WsServerPid, {data, Data}),
+			handle_websocket(Ws, WsServerPid, Timeout, Counter);
 		_ ->
-			handle_websocket(Ws, EventHandler)
+			handle_websocket(Ws, WsServerPid, Timeout, Counter)
+		after Timeout ->
+			NewCounter = Counter + 1,
+			Heartbeat = socketio_utils:get_heartbeat(NewCounter),
+			gen_server:cast(WsServerPid, {send, Heartbeat}),
+			handle_websocket(Ws, WsServerPid, Timeout, NewCounter)
   end.
-
-%% @private
-%% @doc
-%% Whenever an event manager receives a request sent using
-%% gen_event:call/3,4, this function is called for the specified
-%% event handler to handle the request.
-%%
-%% @spec handle_call(Request, State) ->
-%%                   {ok, Reply, State} |
-%%                   {swap_handler, Reply, Args1, State1, Mod2, Args2} |
-%%                   {remove_handler, Reply}
-handle_call(_Request, State) ->
-    Reply = ok,
-    {ok, Reply, State}.
 
 %% @private
 %% @doc
@@ -131,13 +131,11 @@ handle_call(_Request, State) ->
 %%                         {swap_handler, Args1, State1, Mod2, Args2} |
 %%                         remove_handler
 handle_info({'DOWN', _, process, _, _}, State) ->
-	gen_event:notify(self(), gone),
-	{ok, State};
+	{stop, normal, State};
 handle_info({'EXIT', _, process, _, _}, State) ->
-	gen_event:notify(self(), gone),
-	{ok, State};
+	{stop, normal, State};
 handle_info(_Info, State) ->
-	{ok, State}.
+	{noreply, State}.
 
 %% @private
 %% @doc
@@ -146,11 +144,9 @@ handle_info(_Info, State) ->
 %% do any necessary cleaning up.
 %%
 %% @spec terminate(Reason, State) -> void()
-terminate(_Reason, {SocketIo, SocketIoLoop, SocketPid, _}) ->
-	io:format("AutoExit is ~p~n", [SocketIo#socketio.autoexit]),
+terminate(_Reason, {SocketIo, SocketIoLoop, SocketPid}) ->
 	case SocketIo#socketio.autoexit of
 		true ->
-			io:format("HEre"),
 			exit(SocketIoLoop, kill),
 			exit(SocketPid, kill);
 		_ ->

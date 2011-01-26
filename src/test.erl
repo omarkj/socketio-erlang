@@ -15,9 +15,8 @@ incoming(Req) ->
   BinPath = binary:list_to_bin([Req:get(path)]),
   case BinPath of
 		<<"/rt/", Rest/binary>> ->
-			socketio:create(Rest, Req, true,
+			socketio:create(Rest, Req, true, {5000},
 				fun(SocketIo)->
-					SocketIo:send("Welcome!"),
 					handle_socketio(SocketIo)
 				end);
 		_ ->
@@ -27,14 +26,11 @@ incoming(Req) ->
 
 handle_socketio(SocketIo) ->
   receive
+		open ->
+			handle_socketio(SocketIo);
     {data, Data} ->
-			io:format("Got data ~p~n", [Data]),
 			SocketIo:send(Data),
       handle_socketio(SocketIo);
-		{client, gone} ->
-			io:format("The client is gone"),
+		gone ->
       handle_socketio(SocketIo)
-  after 2000 ->
-    SocketIo:send("Beat"),
-    handle_socketio(SocketIo)
   end.

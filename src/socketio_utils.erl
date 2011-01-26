@@ -1,6 +1,6 @@
 -module (socketio_utils).
 
--export ([encode/1, decode/1]).
+-export ([encode/1, decode/1, get_heartbeat/1]).
 
 % Encode messages to Socket.IO format
 encode({json, Message}) ->
@@ -24,3 +24,6 @@ decode(<<"\~m\~", Rest/binary>>) ->
   end;
 decode(Message) ->
   Message.
+
+get_heartbeat(Number) ->
+	binary:list_to_bin([<<"\~h\~">>, integer_to_list(Number)]).

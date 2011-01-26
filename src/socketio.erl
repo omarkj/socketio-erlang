@@ -28,19 +28,15 @@
 -include ("socketio.hrl").
 
 %% API
--export ([create/4, broadcast/1]).
+-export ([create/5, broadcast/1]).
 
 broadcast(_) ->
 	void.
 
-create(<<"websocket">>, Req, AutoExit, Loop) ->
+create(<<"websocket">>, Req, AutoExit, Options, Loop) ->
 	case mochiweb_websocket_server:check(Req:get(headers)) of
 		{true, Version} ->
-			Ref = erlang:make_ref(),
-			gen_event:add_handler(socketio_manager, {socketio_ws_handler, Ref},
-				[Req, Version, AutoExit, Loop, fun() ->
-					gen_event:delete_handler(socketio_manager, {socketio_ws_handler, Ref}, [])
-					end]);
+			socketio_ws:start_link(Req, Version, AutoExit, Options, Loop);
 		_ ->
 			Req:ok("No WS")
 	end.
