@@ -33,10 +33,22 @@
 broadcast(_) ->
 	void.
 
-create(<<"websocket">>, Req, AutoExit, Options, Loop) ->
-	case mochiweb_websocket_server:check(Req:get(headers)) of
-		{true, Version} ->
-			socketio_ws:start_link(Req, Version, AutoExit, Options, Loop);
-		_ ->
-			Req:ok("No WS")
-	end.
+% create(<<"websocket">>, Req, AutoExit, Options, Loop) ->
+% 	case mochiweb_websocket_server:check(Req:get(headers)) of
+% 		{true, Version} ->
+% 			socketio_ws:start_link(Req, Version, AutoExit, Options, Loop);
+% 		_ ->
+% 			Req:ok("No WS")
+% 	end;
+
+% For a strange reason xhr-pooling request end with a double slash..
+create(<<"xhr-polling//", Session/binary>>, Req, AutoExit, Options, Loop) ->
+	case socketio_xhrpolling:find_process(Session) of
+		undefined -> % New user, create server
+			socketio_xhrpolling:start_link(Req, Session, AutoExit, Options, Loop);
+		Pid -> % Returning user, cast the request to him
+			gen_server:cast(Pid, {req, Req})
+	end;
+
+create(Rest, _, _, _, _) ->
+	io:format("Rest is ~p~n", [Rest]).
