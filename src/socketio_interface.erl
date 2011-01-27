@@ -33,5 +33,4 @@
 list() -> SocketIo.
 
 send(Message) ->
-	FormattedMsg = socketio_utils:encode(binary:list_to_bin([Message])),
-	gen_server:cast(Pid, {send, FormattedMsg}).
+	gen_server:cast(Pid, {send, socketio_utils:encode(binary:list_to_bin([Message]))}).

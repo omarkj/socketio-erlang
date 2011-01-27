@@ -8,8 +8,7 @@
 
 start(Port) ->
 	Options = [{port, Port}],
-	mochiweb_http:start([{name, ?MODULE}, {loop, ?INCOMING} | Options]),
-	gen_event:start_link({local, socketio_manager}).
+	mochiweb_http:start([{name, ?MODULE}, {loop, ?INCOMING} | Options]).
 
 incoming(Req) ->
   BinPath = binary:list_to_bin([Req:get(path)]),
@@ -27,6 +26,7 @@ incoming(Req) ->
 handle_socketio(SocketIo) ->
   receive
 		open ->
+			io:format("O HERRO!~n"),
 			handle_socketio(SocketIo);
     {data, Data} ->
 			SocketIo:send(Data),

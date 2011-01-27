@@ -1,6 +1,6 @@
 % Socket.IO server for Erlang
 % 
-% Copyright (C) 2011, Ómar Yasin <omar@kodiak.is>
+% Copyright (C) 2011, Kóði ehf <info@kodiak.is>, Ómar Yasin <omar@kodiak.is>
 % 
 % All rights reserved.
 % 
@@ -29,16 +29,15 @@
 -behaviour (gen_server).
 
 %% API
--export([start_link/5, find_process/1]).
-
--export ([resume/4]).
+-export([start_link/5, find_process/1, check_living/1]).
 
 %% gen_event callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
--define (LOOP, {?MODULE, xhr_loop}).
 -define(REF, ?MODULE).
+-record (state, {buffer = [], xhrpid, socketioloop,
+	timeout, timerref, autoexit}).
 
 %%% gen_event callbacks
 %% @doc
@@ -47,18 +46,16 @@
 %% @spec start_link() -> {ok, Pid} | {error, Error}
 start_link(Req, Session, AutoExit, Options, Loop) ->
 	gen_server:start_link({global, {sio_xp, Session}}, ?MODULE,
-		[Req, AutoExit, Options, Loop], []).
+		[Req, Session, AutoExit, Options, Loop], []).
 
 find_process(Session) ->
 	global:whereis_name({sio_xp, Session}).
 
-%%% gen_event callbacks
-%% @private
-%% @doc
-%% Whenever a new event handler is added to an event manager,
-%% this function is called to initialize the event handler.
-%% @spec init(Args) -> {ok, State}
-init([Req, AutoExit, {_}, Loop]) ->
+check_living(Pid) ->
+	gen_server:cast(Pid, check).
+
+%% Gen_server
+init([Req, Session, AutoExit, {Timeout}, Loop]) ->
 	SocketIo = #socketio{
     req = undefined, % Remove from the socket io object since it's not a given
 		type = 'XHR polling',
@@ -69,64 +66,110 @@ init([Req, AutoExit, {_}, Loop]) ->
   },
 	SocketIoClient = socketio_interface:new(SocketIo, self()),
 	SocketIoLoop = spawn(fun() -> Loop(SocketIoClient) end),
-	gen_server:cast(self(), {req, Req}),
-	{ok, {SocketIo, SocketIoLoop}}.
+	Req:ok({_ContentType = "text/plain", % Return the session ID to the user
+		_Headers = [
+			{"Access-Control-Allow-Origin", "*"},
+			{"Connection", "keep-alive"}], socketio_utils:encode(Session)}),
+	gen_server:cast(self(), open),
+	{ok, #state{ socketioloop = SocketIoLoop, timeout = Timeout, autoexit = AutoExit }}.
 
-handle_cast({req, Req}, State) ->
-	case Req:get(method) of
-		'GET' ->
-			xhr_loop(Req, 10000, 0);
-		'POST' ->
-			void;
-		_ ->
-			void
-	end,
+handle_cast(open, State = #state{socketioloop = SocketIoLoop}) ->
+	SocketIoLoop ! open,
 	{noreply, State};
 
-handle_cast({data, Buffer}, {SocketIo, SocketIoLoop}) ->
-	case socketio_utils:decode(Buffer) of
+handle_cast({poll, Req}, State = #state{timeout = Timeout}) ->
+	NewState = case Req:get(method) of
+		'GET' ->
+			XhrServerPid = self(),
+			XhrPid = spawn(fun() -> xhr_loop(Req, XhrServerPid, Timeout) end),
+			gen_server:cast(self(), flush),
+			State#state{xhrpid = XhrPid};
+		_ ->
+			State
+	end,
+	{noreply, NewState};
+
+handle_cast({data, Req, Body}, State = #state{socketioloop = SocketIoLoop}) ->
+	case socketio_utils:decode(Body) of
 		heartbeat -> void;
 		Message ->
-			SocketIoLoop ! {data, Message}
+			[{Data, _}|_] = mochiweb_util:parse_qs(Message), % Getting this encoded
+			SocketIoLoop ! {data, list_to_binary(Data)}
 	end,
-	{noreply, {SocketIo, SocketIoLoop}};
+	Req:ok({_ContentType = "text/plain",
+		_Headers = [{"Access-Control-Allow-Origin", "*"},
+		{"Connection", "keep-alive"}], "ok"}),
+	{noreply, State};
 
-handle_cast({send, Data}, {SocketIo, SocketIoLoop}) ->
-	Req = SocketIo#socketio.req,
-	mochiweb_websocket_server:send(Req:get(socket), Data),
-	{noreply, {SocketIo, SocketIoLoop}};
+handle_cast({send, Data}, State = #state{xhrpid = XHRPid, buffer = Buffer}) ->
+	NewState = case XHRPid of
+		undefined ->
+			NewBuffer = Buffer ++ [Data],
+			State#state{buffer = NewBuffer};
+		Pid ->
+			Pid ! {send, Data},
+			State
+	end,
+	{noreply, NewState};
 
-handle_cast(open, {SocketIo, SocketIoLoop}) ->
-	SocketIoLoop ! open,
-	{noreply, {SocketIo, SocketIoLoop}};
+handle_cast(flush, State = #state{buffer = Buffer, xhrpid = XhrPid}) ->
+	NewState = case length(Buffer) of
+		0 -> State;
+		_ ->
+			io:format("Flush the buffer of length ~p~n", [length(Buffer)]),
+			XhrPid ! {send, Buffer},
+			State#state{buffer = []}
+	end,
+	{noreply, NewState};
+
+handle_cast(open, State) ->
+	State#state.socketioloop ! open,
+	{noreply, State};
+
+handle_cast(gone, State = #state{timeout = Timeout, timerref = TimerRef}) -> % User not here
+	case TimerRef of
+		undefined -> void;
+		TRef -> timer:cancel(TRef)
+	end,
+	WaitFor = Timeout + 2000,
+	{ok, NewTimer} = timer:apply_after(WaitFor, ?MODULE, check_living, [self()]),
+	{noreply, State#state{xhrpid = undefined, timerref = NewTimer}};
+
+handle_cast(gone, State) -> % User not here
+	io:format("Matched this gone"),
+	{noreply, State};
+
+handle_cast(check, State = #state{xhrpid = XHRPid}) ->
+	case XHRPid of
+		undefined ->
+			{stop, normal, State};
+		_ ->
+			{noreply, State}
+	end;
 
 handle_cast(_, State) ->
 	{noreply, State}.
 
 handle_call(_Request, _From, State) ->
-  Reply = ok,
+	Reply = ok,
   {reply, Reply, State}.
 
-xhr_loop(Req, Timeout, Counter) ->
-	Reentry = mochiweb_http:reentry(?LOOP),
-	NewCounter = Counter + 1,
-	Hearbeat = socketio_utils:get_heartbeat(NewCounter),
-	erlang:send_after(Timeout, self(), "Hearbeat"), % This is the heartbeat
-	proc_lib:hibernate(?MODULE, resume, [Req, Reentry, Timeout, Counter]),
-	ok.
-
-resume(Req, Reentry, Timeout, Counter) ->
+xhr_loop(Req, XhrPollingPid, Timeout) ->
+	io:format("In loop~n"),
 	receive
-		Outgoing ->
+		{send, Message} ->
+			gen_server:cast(XhrPollingPid, gone),
 			Req:ok({_ContentType = "text/plain",
-	            _Headers = [
-								{"Access-Control-Allow-Origin", "*"}
-							],
-	            "Response"})
+				_Headers = [{"Access-Control-Allow-Origin", "*"},
+				{"Connection", "keep-alive"}], Message});
+		_ -> void
+		after Timeout ->
+			gen_server:cast(XhrPollingPid, gone),
+			Req:ok({_ContentType = "text/plain",
+				_Headers = [{"Access-Control-Allow-Origin", "*"},
+				{"Connection", "keep-alive"}], ""})
 	end,
-	io:format("About to reenter loop"),
-	io:format("Reentry is ~p~n", [Reentry]),
-	Reentry(Req, Timeout, Counter).
+	ok.
 
 %% @private
 %% @doc
@@ -138,10 +181,6 @@ resume(Req, Reentry, Timeout, Counter) ->
 %%                         {ok, State} |
 %%                         {swap_handler, Args1, State1, Mod2, Args2} |
 %%                         remove_handler
-handle_info({'DOWN', _, process, _, _}, State) ->
-	{stop, normal, State};
-handle_info({'EXIT', _, process, _, _}, State) ->
-	{stop, normal, State};
 handle_info(_Info, State) ->
 	{noreply, State}.
 
@@ -152,19 +191,17 @@ handle_info(_Info, State) ->
 %% do any necessary cleaning up.
 %%
 %% @spec terminate(Reason, State) -> void()
-terminate(_Reason, {SocketIo, SocketIoLoop, SocketPid}) ->
-	case SocketIo#socketio.autoexit of
+terminate(_Reason, #state{socketioloop = SocketIoLoop, autoexit = AutoExit}) ->
+	io:format("CYA"),
+	case AutoExit of
 		true ->
-			exit(SocketIoLoop, kill),
-			exit(SocketPid, kill);
+			exit(SocketIoLoop, kill);
 		_ ->
-			SocketIoLoop ! gone,
-			exit(SocketPid, kill)
+			SocketIoLoop ! gone
 	end,
 	ok;
 terminate(_, _) ->
 	ok.
-	
 
 %% @private
 %% @doc

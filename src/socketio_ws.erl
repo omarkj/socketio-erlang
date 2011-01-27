@@ -101,7 +101,7 @@ handle_call(_Request, _From, State) ->
 create_socket(Req, Version, WsServerPid, Timeout) ->
 	mochiweb_websocket_server:create_ws(Req, Version, true, 
 		fun(Ws) ->
-			gen_server:cast(WsServerPid, {send, socketio_utils:encode(binary:list_to_bin(erlang:ref_to_list(make_ref())))}),
+			gen_server:cast(WsServerPid, {send, socketio_utils:get_id()}),
 			gen_server:cast(WsServerPid, open),
 			handle_websocket(Ws, WsServerPid, Timeout, 0)
 		end).

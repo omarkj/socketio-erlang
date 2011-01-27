@@ -42,13 +42,26 @@ broadcast(_) ->
 % 	end;
 
 % For a strange reason xhr-pooling request end with a double slash..
-create(<<"xhr-polling//", Session/binary>>, Req, AutoExit, Options, Loop) ->
-	case socketio_xhrpolling:find_process(Session) of
-		undefined -> % New user, create server
-			socketio_xhrpolling:start_link(Req, Session, AutoExit, Options, Loop);
-		Pid -> % Returning user, cast the request to him
-			gen_server:cast(Pid, {req, Req})
+create(<<"xhr-polling/", Rest/binary>>, Req, AutoExit, Options, Loop) ->
+	[Session|Tail] = binary:split(Rest, <<"/">>),
+	case binary:referenced_byte_size(Session) of
+		0 -> % No session, create new session
+			SessionId = socketio_utils:random(),
+			socketio_xhrpolling:start_link(Req, SessionId, AutoExit, Options, Loop);
+		_ -> % Some session, look it up and pid it
+			case socketio_xhrpolling:find_process(Session) of
+				undefined ->
+					void; % TODO: Close connection, invalid session ID
+				Pid ->
+					case Tail of
+						[<<"send">>] ->
+							<<"data=", Data/binary>> = Req:recv_body(),
+							gen_server:cast(Pid, {data, Req, Data});
+						_ ->
+							gen_server:cast(Pid, {poll, Req})
+					end
+			end
 	end;
 
-create(Rest, _, _, _, _) ->
-	io:format("Rest is ~p~n", [Rest]).
+create(_, Req, _, _, _) ->
+	Req:respond({404, [], "404 Not Found\r\n"}).
