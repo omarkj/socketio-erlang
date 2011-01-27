@@ -24,7 +24,7 @@
 % HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 % NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 % POSSIBILITY OF SUCH DAMAGE.
--module (socketio_xhrpolling).
+-module (socketio_xhrmultipart).
 -include ("socketio.hrl").
 -behaviour (gen_server).
 
@@ -40,13 +40,13 @@
 	timeout, timerref, autoexit}).
 
 %%% gen_server callbacks
-%% Creates xhr poll server
+%% Creates xhr poll server3
 start_link(Req, Session, AutoExit, Options, Loop) ->
-	gen_server:start_link({global, {sio_xp, Session}}, ?MODULE,
+	gen_server:start_link({global, {sio_xm, Session}}, ?MODULE,
 		[Req, Session, AutoExit, Options, Loop], []).
 
 find_process(Session) ->
-	global:whereis_name({sio_xp, Session}).
+	global:whereis_name({sio_xm, Session}).
 
 check_living(Pid) ->
 	gen_server:cast(Pid, check).
@@ -54,17 +54,15 @@ check_living(Pid) ->
 %% Callback
 init([Req, Session, AutoExit, {Timeout}, Loop]) ->
 	SocketIo = #socketio{
-		type = 'XHR polling',
+		type = 'XHR multipart',
     scheme = Req:get(scheme),
     headers = Req:get(headers),
     autoexit = AutoExit
   },
+	XhrMMpServerPid = self(),
 	SocketIoClient = socketio_interface:new(SocketIo, self()),
 	SocketIoLoop = spawn(fun() -> Loop(SocketIoClient) end),
-	Req:ok({_ContentType = "text/plain", % Return the session ID to the user
-		_Headers = [
-			{"Access-Control-Allow-Origin", "*"},
-			{"Connection", "keep-alive"}], socketio_utils:encode(Session)}),
+	XhrPid = spawn(fun() -> xhr_loop(Req, XhrMMpServerPid, Timeout) end),
 	gen_server:cast(self(), open),
 	{ok, #state{ socketioloop = SocketIoLoop, timeout = Timeout, autoexit = AutoExit }}.
 
@@ -149,7 +147,12 @@ handle_call(_Request, _From, State) ->
 	Reply = ok,
   {reply, Reply, State}.
 
-xhr_loop(Req, XhrPollingPid, Timeout) -> % TODO: Make this loop hibernate
+xhr_loop(Req, XhrPollingPid, Timeout) -> % TODO: Change into XHR Multipart loop
+	% Req:start_response({200, [
+	% 	{"Content-Type", "multipart/x-mixed-replace;boundary=\"socketio\""},
+	% 	{"Access-Control-Allow-Origin", "*"},
+	% 	{"Connection", "keep-alive"}
+	% ]}),
 	receive
 		{send, Message} ->
 			gen_server:cast(XhrPollingPid, gone),

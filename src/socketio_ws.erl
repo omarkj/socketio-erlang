@@ -36,6 +36,7 @@
 	 terminate/2, code_change/3]).
 
 -define(REF, ?MODULE).
+-record (state, { req, socketioloop, socketpid }).
 
 %%% gen_event callbacks
 %% @doc
@@ -57,21 +58,19 @@ stop() ->
 %% @spec init(Args) -> {ok, State}
 init([Req, Version, AutoExit, {Timeout}, Loop]) ->
 	SocketIo = #socketio{
-    req = Req,
 		type = websocket,
     scheme = Req:get(scheme),
-    path = Req:get(path),
     headers = Req:get(headers),
     autoexit = AutoExit
   },
 	WsServerPid = self(),
 	SocketIoClient = socketio_interface:new(SocketIo, self()),
 	SocketIoLoop = spawn(fun() -> Loop(SocketIoClient) end),
-	SocketPid = spawn(fun() -> create_socket(SocketIo#socketio.req, Version, WsServerPid, Timeout) end),
+	SocketPid = spawn(fun() -> create_socket(Req, Version, WsServerPid, Timeout) end),
 	monitor(process, SocketPid),
-	{ok, {SocketIo, SocketIoLoop, SocketPid}}.
+	{ok, #state {req = Req, socketioloop = SocketIoLoop, socketpid = SocketPid}}.
 	
-handle_cast({data, Data}, {SocketIo, SocketIoLoop, SocketPid}) ->
+handle_cast({data, Data}, State = #state{socketioloop = SocketIoLoop}) ->
 	case socketio_utils:decode(Data, []) of
 		heartbeat -> void;
 		Message ->
@@ -79,19 +78,15 @@ handle_cast({data, Data}, {SocketIo, SocketIoLoop, SocketPid}) ->
 				SocketIoLoop ! {data, M}
 			end, Message)
 	end,
-	{noreply, {SocketIo, SocketIoLoop, SocketPid}};
+	{noreply, State};
 
-handle_cast({send, Data}, {SocketIo, SocketIoLoop, SocketPid}) ->
-	Req = SocketIo#socketio.req,
+handle_cast({send, Data}, State = #state{req = Req}) ->
 	mochiweb_websocket_server:send(Req:get(socket), Data),
-	{noreply, {SocketIo, SocketIoLoop, SocketPid}};
+	{noreply, State};
 
-handle_cast(open, {SocketIo, SocketIoLoop, SocketPid}) ->
+handle_cast(open, State = #state{socketioloop = SocketIoLoop}) ->
 	SocketIoLoop ! open,
-	{noreply, {SocketIo, SocketIoLoop, SocketPid}};
-
-handle_cast(gone, {SocketIo, SocketIoLoop, SocketPid}) ->
-	{noreply, {SocketIo, SocketIoLoop, SocketPid}};
+	{noreply, State};
 
 handle_cast(_, State) ->
 	{noreply, State}.
