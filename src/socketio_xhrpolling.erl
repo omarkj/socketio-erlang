@@ -90,11 +90,16 @@ handle_cast({poll, Req}, State = #state{timeout = Timeout}) ->
 	{noreply, NewState};
 
 handle_cast({data, Req, Body}, State = #state{socketioloop = SocketIoLoop}) ->
-	case socketio_utils:decode(Body) of
+	case socketio_utils:decode(Body, []) of
 		heartbeat -> void;
 		Message ->
-			[{Data, _}|_] = mochiweb_util:parse_qs(Message), % Getting this encoded
-			SocketIoLoop ! {data, list_to_binary(Data)}
+			lists:map(fun(M) ->
+				case mochiweb_util:parse_qs(M) of
+					[{Data, _}|_] ->
+						SocketIoLoop ! {data, list_to_binary(Data)};
+					_ -> void
+				end
+			end, Message)
 	end,
 	Req:ok({_ContentType = "text/plain",
 		_Headers = [{"Access-Control-Allow-Origin", "*"},
@@ -116,7 +121,6 @@ handle_cast(flush, State = #state{buffer = Buffer, xhrpid = XhrPid}) ->
 	NewState = case length(Buffer) of
 		0 -> State;
 		_ ->
-			io:format("Flush the buffer of length ~p~n", [length(Buffer)]),
 			XhrPid ! {send, Buffer},
 			State#state{buffer = []}
 	end,
@@ -155,7 +159,6 @@ handle_call(_Request, _From, State) ->
   {reply, Reply, State}.
 
 xhr_loop(Req, XhrPollingPid, Timeout) ->
-	io:format("In loop~n"),
 	receive
 		{send, Message} ->
 			gen_server:cast(XhrPollingPid, gone),

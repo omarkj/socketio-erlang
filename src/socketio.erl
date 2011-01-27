@@ -55,8 +55,13 @@ create(<<"xhr-polling/", Rest/binary>>, Req, AutoExit, Options, Loop) ->
 				Pid ->
 					case Tail of
 						[<<"send">>] ->
-							<<"data=", Data/binary>> = Req:recv_body(),
-							gen_server:cast(Pid, {data, Req, Data});
+							Incoming = case Req:recv_body() of
+								<<"data=", Data/binary>> ->
+									Data;
+								_ ->
+									<<>>
+							end,
+							gen_server:cast(Pid, {data, Req, Incoming});
 						_ ->
 							gen_server:cast(Pid, {poll, Req})
 					end

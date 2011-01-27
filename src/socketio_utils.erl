@@ -1,6 +1,6 @@
 -module (socketio_utils).
 
--export ([encode/1, decode/1, get_heartbeat/1, ref_to_msg/1, random/0]).
+-export ([encode/1, decode/2, get_heartbeat/1, ref_to_msg/1, random/0]).
 
 % Encode messages to Socket.IO format
 encode({json, Message}) ->
@@ -12,18 +12,22 @@ encode(Message) ->
 % Messages look like:
 % ~m~MSGLENGTH~m~MESSAGE or
 % ~m~MSGLENGTH~m~~j~JSON
-decode(<<"\~m\~", Rest/binary>>) ->
-  case binary:match(Rest, <<"\~m\~">>) of
-    nomatch -> badmsg; % Not valid, not sure what to do.
-    {Beginning, End} ->
-      Cons = Beginning + End,
-      M = erlang:size(Rest) - Cons,
-      binary:part(Rest, {Cons, M});
-    _ ->
-      badmsg
-  end;
-decode(Message) ->
-  Message.
+% TODO: REWRITE FOR BUFFERED MSGS
+decode(<<"\~m\~", Message/binary>>, Buffer) ->
+	[_|[Message0]] = binary:split(Message, <<"\~m\~">>), % Get past the length
+	case binary:split(Message, <<"\~m\~">>) of
+		[_|[Message0]] ->
+			case binary:match(Message0, <<"\~m\~">>) of
+				{Beginning, _} ->
+					<<Message1:Beginning/binary, Rest/binary>> = Message0,
+					NewBuffer = Buffer ++ [Message1],
+					decode(Rest, NewBuffer);
+				nomatch ->
+					Buffer ++ [Message0]
+			end
+	end;
+decode(_, Buffer) ->
+  Buffer.
 
 get_heartbeat(Number) ->
 	binary:list_to_bin([<<"\~h\~">>, integer_to_list(Number)]).

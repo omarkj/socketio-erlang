@@ -71,11 +71,13 @@ init([Req, Version, AutoExit, {Timeout}, Loop]) ->
 	monitor(process, SocketPid),
 	{ok, {SocketIo, SocketIoLoop, SocketPid}}.
 	
-handle_cast({data, Buffer}, {SocketIo, SocketIoLoop, SocketPid}) ->
-	case socketio_utils:decode(Buffer) of
+handle_cast({data, Data}, {SocketIo, SocketIoLoop, SocketPid}) ->
+	case socketio_utils:decode(Data, []) of
 		heartbeat -> void;
 		Message ->
-			SocketIoLoop ! {data, Message}
+			lists:map(fun(M) ->
+				SocketIoLoop ! {data, M}
+			end, Message)
 	end,
 	{noreply, {SocketIo, SocketIoLoop, SocketPid}};
 
