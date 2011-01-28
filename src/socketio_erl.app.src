@@ -1,7 +1,7 @@
 {application, socketio_erl,
  [
-  {description, ""},
-  {vsn, "1"},
+  {description, "Socket.IO for Erlang"},
+  {vsn, "0.1"},
   {registered, []},
   {applications, [
                   kernel,
