@@ -1,12 +1,12 @@
 {application, socketio_erl,
- [
-  {description, "Socket.IO for Erlang"},
+ [{description, "Socket.IO for Erlang"},
   {vsn, "0.1"},
-  {registered, []},
-  {applications, [
-                  kernel,
-                  stdlib
-                 ]},
-  {mod, { socketio_erl_app, []}},
-  {env, []}
+  {modules, [
+		socketio,
+		socketio_interface,
+		socketio_utils,
+		socketio_ws,
+		socketio_xhrpolling
+		]},
+  {registered, []}
  ]}.
