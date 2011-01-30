@@ -29,7 +29,7 @@
 -behaviour (gen_server).
 
 %% API
--export([start_link/5, find_process/1, check_living/1]).
+-export([start/5, start_link/5, find_process/1, check_living/1]).
 
 %% gen_server callback
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -44,6 +44,34 @@
 start_link(Req, Session, AutoExit, Options, Loop) ->
 	gen_server:start_link({global, {sio_xp, Session}}, ?MODULE,
 		[Req, Session, AutoExit, Options, Loop], []).
+
+start(Path, Req, AutoExit, Options, Loop) ->
+  [Session|Tail] = binary:split(Path, <<"/">>),
+	case binary:referenced_byte_size(Session) of
+		0 -> % No session, create new session
+			SessionId = socketio_utils:random(),
+			socketio_xhrpolling:start_link(Req, SessionId, AutoExit, Options, Loop);
+		_ -> % Some session, look it up and pid it
+			case socketio_xhrpolling:find_process(Session) of
+				undefined ->
+					Req:ok({_ContentType = "text/plain",
+						_Headers = [{"Access-Control-Allow-Origin", "*"},
+						{"Connection", "keep-alive"}], "error"}); % Probably not what SocketIO expects
+				Pid ->
+					case Tail of
+						[<<"send">>] ->
+							Incoming = case Req:recv_body() of
+								<<"data=", Data/binary>> ->
+									Data;
+								_ ->
+									<<>>
+							end,
+							gen_server:cast(Pid, {data, Req, Incoming});
+						_ ->
+							gen_server:cast(Pid, {poll, Req})
+					end
+			end
+	end.
 
 find_process(Session) ->
 	global:whereis_name({sio_xp, Session}).

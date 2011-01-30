@@ -34,41 +34,10 @@ broadcast(_) ->
 	void.
 
 create(<<"websocket">>, Req, AutoExit, Options, Loop) ->
-	case mochiweb_websocket_server:check(Req:get(headers)) of
-		{true, Version} ->
-			socketio_ws:start_link(Req, Version, AutoExit, Options, Loop);
-		_ ->
-			Req:ok("No WS")
-	end;
+  socketio_ws:start(Req, AutoExit, Options, Loop);
 
-% For a strange reason xhr-pooling request end with a double slash..
 create(<<"xhr-polling/", Rest/binary>>, Req, AutoExit, Options, Loop) ->
-	[Session|Tail] = binary:split(Rest, <<"/">>),
-	case binary:referenced_byte_size(Session) of
-		0 -> % No session, create new session
-			SessionId = socketio_utils:random(),
-			socketio_xhrpolling:start_link(Req, SessionId, AutoExit, Options, Loop);
-		_ -> % Some session, look it up and pid it
-			case socketio_xhrpolling:find_process(Session) of
-				undefined ->
-					Req:ok({_ContentType = "text/plain",
-						_Headers = [{"Access-Control-Allow-Origin", "*"},
-						{"Connection", "keep-alive"}], "error"}); % Probably not what SocketIO expects
-				Pid ->
-					case Tail of
-						[<<"send">>] ->
-							Incoming = case Req:recv_body() of
-								<<"data=", Data/binary>> ->
-									Data;
-								_ ->
-									<<>>
-							end,
-							gen_server:cast(Pid, {data, Req, Incoming});
-						_ ->
-							gen_server:cast(Pid, {poll, Req})
-					end
-			end
-	end;
+  socketio_xhr:start(Rest, Req, AutoExit, Options, Loop);
 
 create(_, Req, _, _, _) ->
 	Req:respond({404, [], "404 Not Found\r\n"}).

@@ -29,23 +29,32 @@
 -behaviour (gen_server).
 
 %% API
--export([start_link/5, stop/0]).
+-export([start/4, start_link/6, stop/0]).
 
 %% gen_event callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
 -define(REF, ?MODULE).
--record (state, { req, socketioloop, socketpid }).
+-record (state, { req, socketioloop, socketpid, sessionid }).
 
 %%% gen_event callbacks
 %% @doc
 %% Creates an event manager
 %%
 %% @spec start_link() -> {ok, Pid} | {error, Error}
-start_link(Req, Version, AutoExit, Options, Loop) ->
-	gen_server:start_link({global, erlang:make_ref()}, ?MODULE,
-		[Req, Version, AutoExit, Options, Loop], []).
+start_link(Req, SessionId, Version, AutoExit, Options, Loop) ->
+	gen_server:start_link({global, SessionId}, ?MODULE,
+		[Req, SessionId, Version, AutoExit, Options, Loop], []).
+
+start(Req, AutoExit, Options, Loop) ->
+	case mochiweb_websocket_server:check(Req:get(headers)) of
+		{true, Version} ->
+		  SessionId = socketio_utils:random(),
+			socketio_ws:start_link(Req, SessionId, Version, AutoExit, Options, Loop);
+		_ ->
+			Req:ok("No WS")
+	end.
 
 stop() ->
 	gen_server:cast(?REF, stop).
@@ -56,7 +65,7 @@ stop() ->
 %% Whenever a new event handler is added to an event manager,
 %% this function is called to initialize the event handler.
 %% @spec init(Args) -> {ok, State}
-init([Req, Version, AutoExit, {Timeout}, Loop]) ->
+init([Req, SessionId, Version, AutoExit, {Timeout}, Loop]) ->
 	SocketIo = #socketio{
 		type = websocket,
     scheme = Req:get(scheme),
@@ -66,9 +75,10 @@ init([Req, Version, AutoExit, {Timeout}, Loop]) ->
 	WsServerPid = self(),
 	SocketIoClient = socketio_interface:new(SocketIo, self()),
 	SocketIoLoop = spawn(fun() -> Loop(SocketIoClient) end),
-	SocketPid = spawn(fun() -> create_socket(Req, Version, WsServerPid, Timeout) end),
+	SocketPid = spawn(fun() -> create_socket(Req, SessionId, Version, WsServerPid, Timeout) end),
 	monitor(process, SocketPid),
-	{ok, #state {req = Req, socketioloop = SocketIoLoop, socketpid = SocketPid}}.
+	{ok, #state {req = Req, socketioloop = SocketIoLoop,
+	  socketpid = SocketPid, sessionid = SessionId}}.
 	
 handle_cast({data, Data}, State = #state{socketioloop = SocketIoLoop}) ->
 	case socketio_utils:decode(Data, []) of
@@ -95,10 +105,10 @@ handle_call(_Request, _From, State) ->
   Reply = ok,
   {reply, Reply, State}.
 
-create_socket(Req, Version, WsServerPid, Timeout) ->
+create_socket(Req, SessionId, Version, WsServerPid, Timeout) ->
 	mochiweb_websocket_server:create_ws(Req, Version, true, 
 		fun(Ws) ->
-			gen_server:cast(WsServerPid, {send, socketio_utils:get_id()}),
+			gen_server:cast(WsServerPid, {send, socketio_utils:encode(SessionId)}),
 			gen_server:cast(WsServerPid, open),
 			handle_websocket(Ws, WsServerPid, Timeout, 0)
 		end).
