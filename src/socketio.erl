@@ -11,7 +11,7 @@
 % 
 %  * Redistributions of source code must retain the above copyright notice, this list of conditions and the
 %    following disclaimer.
-%  * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and
+%  * Redistributions in binary form must reproduce the above copyri22ght notice, this list of conditions and
 %    the following disclaimer in the documentation and/or other materials provided with the distribution.
 %  * Neither the name of the authors nor the names of its contributors may be used to endorse or promote
 %    products derived from this software without specific prior written permission.
@@ -34,10 +34,20 @@ broadcast(_) ->
 	void.
 
 create(<<"websocket">>, Req, AutoExit, Options, Loop) ->
-  socketio_ws:start(Req, AutoExit, Options, Loop);
+ socketio_ws:start(Req, AutoExit, Options, Loop);
+
+create(<<"flashsocket", Rest/binary>>, Req, AutoExit, Options, Loop) ->
+  case Rest of
+    <<"/WebSocketMain.swf">> ->
+      Req:serve_file("WebSocketMain.swf", code:priv_dir(socketio_erl));
+    <<"/test/", Rest0/binary>> ->
+      Req:serve_file(binary_to_list(Rest0), code:priv_dir(socketio_erl));
+    _ ->
+      socketio_ws:start(Req, AutoExit, Options, Loop)
+  end;
 
 create(<<"xhr-polling/", Rest/binary>>, Req, AutoExit, Options, Loop) ->
-  socketio_xhr:start(Rest, Req, AutoExit, Options, Loop);
+ socketio_xhrpolling:start(Rest, Req, AutoExit, Options, Loop);
 
 create(_, Req, _, _, _) ->
 	Req:respond({404, [], "404 Not Found\r\n"}).

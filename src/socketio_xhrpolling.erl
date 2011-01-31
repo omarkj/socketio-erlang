@@ -50,7 +50,7 @@ start(Path, Req, AutoExit, Options, Loop) ->
 	case binary:referenced_byte_size(Session) of
 		0 -> % No session, create new session
 			SessionId = socketio_utils:random(),
-			socketio_xhrpolling:start_link(Req, SessionId, AutoExit, Options, Loop);
+			start_link(Req, SessionId, AutoExit, Options, Loop);
 		_ -> % Some session, look it up and pid it
 			case socketio_xhrpolling:find_process(Session) of
 				undefined ->
