@@ -36,16 +36,6 @@ broadcast(_) ->
 create(<<"websocket">>, Req, AutoExit, Options, Loop) ->
  socketio_ws:start(Req, AutoExit, Options, Loop);
 
-create(<<"flashsocket", Rest/binary>>, Req, AutoExit, Options, Loop) ->
-  case Rest of
-    <<"/WebSocketMain.swf">> ->
-      Req:serve_file("WebSocketMain.swf", code:priv_dir(socketio_erl));
-    <<"/test/", Rest0/binary>> ->
-      Req:serve_file(binary_to_list(Rest0), code:priv_dir(socketio_erl));
-    _ ->
-      socketio_ws:start(Req, AutoExit, Options, Loop)
-  end;
-
 create(<<"xhr-polling/", Rest/binary>>, Req, AutoExit, Options, Loop) ->
  socketio_xhrpolling:start(Rest, Req, AutoExit, Options, Loop);
 
