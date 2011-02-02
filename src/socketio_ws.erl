@@ -36,7 +36,7 @@
 	 terminate/2, code_change/3]).
 
 -define(REF, ?MODULE).
--record (state, { req, socketioloop, socketpid, sessionid }).
+-record (state, { req, socketioloop, socketpid, socketio, loop, timeout, version}).
 
 %%% gen_event callbacks
 %% @doc
@@ -44,8 +44,10 @@
 %%
 %% @spec start_link() -> {ok, Pid} | {error, Error}
 start_link(Req, SessionId, Version, AutoExit, Options, Loop) ->
-	gen_server:start_link({global, SessionId}, ?MODULE,
-		[Req, SessionId, Version, AutoExit, Options, Loop], []).
+	{ok, Pid} = gen_server:start_link({global, SessionId}, ?MODULE,
+		[Req, SessionId, Version, AutoExit, Options, Loop], []),
+	gen_tcp:controlling_process(Req:get(socket), Pid),
+	gen_server:cast(Pid, start).
 
 start(Req, AutoExit, Options, Loop) ->
 	case mochiweb_websocket_server:check(Req:get(headers)) of
@@ -68,21 +70,33 @@ stop() ->
 init([Req, SessionId, Version, AutoExit, {Timeout}, Loop]) ->
 	SocketIo = #socketio{
 		type = websocket,
+		unique_id = SessionId,
     scheme = Req:get(scheme),
     headers = Req:get(headers),
     autoexit = AutoExit
   },
+	{ok, #state {req = Req,socketio = SocketIo, loop = Loop, timeout = Timeout,
+		version = Version}}.
+
+handle_cast(start, #state{socketio = SocketIo, req = Req, loop = Loop,
+		timeout = Timeout, version = Version} = State) ->
+	SessionId = State#state.socketio#socketio.unique_id,
 	WsServerPid = self(),
 	SocketIoClient = socketio_interface:new(SocketIo, self()),
 	SocketIoLoop = spawn(fun() -> Loop(SocketIoClient) end),
-	SocketPid = spawn(fun() -> create_socket(Req, SessionId, Version, WsServerPid, Timeout) end),
+	SocketPid = spawn(fun() -> mochiweb_websocket_server:create_ws(Req, Version, true, 
+		fun(Ws) ->
+			gen_server:cast(WsServerPid, {send, socketio_utils:encode(SessionId)}),
+			gen_server:cast(WsServerPid, open),
+			handle_websocket(Ws, WsServerPid, Timeout, 0)
+		end)
+	end),
+	gen_tcp:controlling_process(Req:get(socket), SocketPid),
 	monitor(process, SocketPid),
-	{ok, #state {req = Req, socketioloop = SocketIoLoop,
-	  socketpid = SocketPid, sessionid = SessionId}}.
-	
+	{noreply, State#state{ socketioloop = SocketIoLoop, socketpid = SocketPid }};
+
 handle_cast({data, Data}, State = #state{socketioloop = SocketIoLoop}) ->
 	case socketio_utils:decode(Data, []) of
-		heartbeat -> void;
 		Message ->
 			lists:map(fun(M) ->
 				SocketIoLoop ! {data, M}
@@ -90,8 +104,8 @@ handle_cast({data, Data}, State = #state{socketioloop = SocketIoLoop}) ->
 	end,
 	{noreply, State};
 
-handle_cast({send, Data}, State = #state{req = Req}) ->
-	mochiweb_websocket_server:send(Req:get(socket), Data),
+handle_cast({send, Data}, State = #state{socketpid = SocketPid}) ->
+	SocketPid ! {send, Data},
 	{noreply, State};
 
 handle_cast(open, State = #state{socketioloop = SocketIoLoop}) ->
@@ -104,14 +118,6 @@ handle_cast(_, State) ->
 handle_call(_Request, _From, State) ->
   Reply = ok,
   {reply, Reply, State}.
-
-create_socket(Req, SessionId, Version, WsServerPid, Timeout) ->
-	mochiweb_websocket_server:create_ws(Req, Version, true, 
-		fun(Ws) ->
-			gen_server:cast(WsServerPid, {send, socketio_utils:encode(SessionId)}),
-			gen_server:cast(WsServerPid, open),
-			handle_websocket(Ws, WsServerPid, Timeout, 0)
-		end).
 
 handle_websocket(Ws, WsServerPid, Timeout, Counter) ->
 	receive
@@ -151,7 +157,8 @@ handle_info(_Info, State) ->
 %% do any necessary cleaning up.
 %%
 %% @spec terminate(Reason, State) -> void()
-terminate(_Reason, {SocketIo, SocketIoLoop, SocketPid}) ->
+terminate(_Reason, #state{socketio = SocketIo, socketioloop = SocketIoLoop,
+	socketpid = SocketPid} = _State) ->
 	case SocketIo#socketio.autoexit of
 		true ->
 			exit(SocketIoLoop, kill),
@@ -163,7 +170,6 @@ terminate(_Reason, {SocketIo, SocketIoLoop, SocketPid}) ->
 	ok;
 terminate(_, _) ->
 	ok.
-	
 
 %% @private
 %% @doc

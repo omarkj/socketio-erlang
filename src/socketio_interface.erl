@@ -27,9 +27,16 @@
 
 -module (socketio_interface, [SocketIo, Pid]).
 -include ("socketio.hrl").
--export ([send/1, list/0]).
+-export ([send/1, list/0, get/1]).
 
 %% Module API
+get(type) -> SocketIo#socketio.type;
+get(unique_id) -> SocketIo#socketio.unique_id;
+get(scheme) -> SocketIo#socketio.scheme;
+get(headers) -> SocketIo#socketio.headers;
+get(host) -> SocketIo#socketio.host;
+get(autoexit) -> SocketIo#socketio.autoexit.
+
 list() -> SocketIo.
 
 send(Message) ->

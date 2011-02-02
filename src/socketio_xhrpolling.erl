@@ -83,6 +83,7 @@ check_living(Pid) ->
 init([Req, Session, AutoExit, {Timeout}, Loop]) ->
 	SocketIo = #socketio{
 		type = 'XHR polling',
+		unique_id = Session,
     scheme = Req:get(scheme),
     headers = Req:get(headers),
     autoexit = AutoExit

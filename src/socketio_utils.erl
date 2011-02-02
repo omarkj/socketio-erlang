@@ -43,23 +43,36 @@ encode(Message) ->
 % ~m~MSGLENGTH~m~~j~JSON
 % TODO: Add support for JSON messages
 decode(<<"\~m\~", Message/binary>>, Buffer) ->
-	[_|[Message0]] = binary:split(Message, <<"\~m\~">>), % Get past the length
 	case binary:split(Message, <<"\~m\~">>) of
 		[_|[Message0]] ->
 			case binary:match(Message0, <<"\~m\~">>) of
 				{Beginning, _} ->
 					<<Message1:Beginning/binary, Rest/binary>> = Message0,
-					NewBuffer = Buffer ++ [Message1],
+					NewBuffer = case is_heartbeat(Message1) of
+						false -> Buffer ++ [Message1];
+						true -> Buffer
+					end,
 					decode(Rest, NewBuffer);
 				nomatch ->
-					Buffer ++ [Message0]
+					NewBuffer = case is_heartbeat(Message0) of
+						false -> Buffer ++ [Message0];
+						true -> Buffer
+					end,
+					NewBuffer
 			end
 	end;
 decode(_, Buffer) ->
   Buffer.
 
+is_heartbeat(Message) ->
+	case Message of
+		<<"\~h\~", _Rest/binary>> -> true;
+		_ -> false
+	end.
+
 get_heartbeat(Number) ->
-	binary:list_to_bin([<<"\~h\~">>, integer_to_list(Number)]).
+	Beat = binary:list_to_bin([<<"\~h\~">>, integer_to_list(Number)]),
+	encode(Beat).
 
 ref_to_msg(Ref) ->
 	socketio_utils:encode(binary:list_to_bin(erlang:ref_to_list(Ref))).
