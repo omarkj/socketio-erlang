@@ -1,3 +1,5 @@
+# We're continuing this project over at https://github.com/yrashk/socket.io-erlang
+
 # Socket.IO server in Erlang
 ## Alpha software
 Port of the Socket.IO server to Erlang. Currently supports
